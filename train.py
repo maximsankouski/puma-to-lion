@@ -22,7 +22,14 @@ def train(disc_p, disc_l, gen_p, gen_l, dl, opt_disc, opt_gen, l1, mse, d_scaler
     losses_d = []
     losses_g_p = []
     losses_g_l = []
+    cycle_p_losses = []
+    cycle_l_losses = []
+    identity_p_losses = []
+    identity_l_losses = []
     losses_full = []
+
+    lion_real_scores = []
+    lion_fake_scores = []
 
     for epoch in range(eps):
         real_lions = 0
@@ -30,7 +37,14 @@ def train(disc_p, disc_l, gen_p, gen_l, dl, opt_disc, opt_gen, l1, mse, d_scaler
         loss_d_per_epoch = []
         loss_g_p_per_epoch = []
         loss_g_l_per_epoch = []
+        cycle_p_loss_per_epoch = []
+        cycle_l_loss_per_epoch = []
+        identity_p_loss_per_epoch = []
+        identity_l_loss_per_epoch = []
         full_loss_per_epoch = []
+
+        lion_real_per_epoch = []
+        lion_fake_per_epoch = []
 
         loop = tqdm(dl)
 
@@ -64,7 +78,6 @@ def train(disc_p, disc_l, gen_p, gen_l, dl, opt_disc, opt_gen, l1, mse, d_scaler
             d_scaler.scale(d_loss).backward()
             d_scaler.step(opt_disc)
             d_scaler.update()
-            sched_disc.step()
 
             loss_d_per_epoch.append(d_loss.item())
 
@@ -85,12 +98,26 @@ def train(disc_p, disc_l, gen_p, gen_l, dl, opt_disc, opt_gen, l1, mse, d_scaler
                 cycle_lion_loss = l1(lion, cycle_lion)
                 cycle_puma_loss = l1(puma, cycle_puma)
 
+                cycle_p_loss_per_epoch.append(cycle_puma_loss.item())
+                cycle_l_loss_per_epoch.append(cycle_lion_loss.item())
+
+                # Identity losses
+                identity_puma = gen_p(puma)
+                identity_lion = gen_l(lion)
+                identity_puma_loss = l1(puma, identity_puma)
+                identity_lion_loss = l1(lion, identity_lion)
+
+                identity_p_loss_per_epoch.append(identity_puma_loss.item())
+                identity_l_loss_per_epoch.append(identity_lion_loss.item())
+
                 # Full loss
                 full_loss = (
-                    loss_g_l
-                    + loss_g_p
-                    + cycle_lion_loss * config.CYCLE_LOSS_LAMBDA
-                    + cycle_puma_loss * config.CYCLE_LOSS_LAMBDA
+                        loss_g_l
+                        + loss_g_p
+                        + cycle_lion_loss * config.CYCLE_LOSS_LAMBDA
+                        + cycle_puma_loss * config.CYCLE_LOSS_LAMBDA
+                        + identity_puma_loss * config.IDENTITY_LAMBDA
+                        + identity_lion_loss * config.IDENTITY_LAMBDA
                 )
 
                 full_loss_per_epoch.append(full_loss.item())
@@ -99,31 +126,73 @@ def train(disc_p, disc_l, gen_p, gen_l, dl, opt_disc, opt_gen, l1, mse, d_scaler
             g_scaler.scale(full_loss).backward()
             g_scaler.step(opt_gen)
             g_scaler.update()
-            sched_gen.step()
 
             if idx == 950:
-                save_image(denorm(fake_puma), f"fake_pumas/puma{epoch}.jpg")
-                save_image(denorm(fake_lion), f"fake_lions/lion{epoch}.jpg")
+                save_image(denorm(fake_puma), f"fake_pumas/{epoch + 1}fake_puma.jpg")
+                save_image(denorm(puma), f"fake_lions/{epoch + 1}puma.jpg")
+                save_image(denorm(fake_lion), f"fake_lions/{epoch + 1}fake_lion.jpg")
 
-            loop.set_postfix(lion_real=real_lions / (idx + 1), lion_fake=fake_lions / (idx + 1))
+            # Show and record possibility to recognize real and fake lions
+            lion_real = real_lions / (idx + 1)
+            lion_fake = fake_lions / (idx + 1)
+            loop.set_postfix(lion_real, lion_fake)
 
-        # Record losses
+            lion_real_per_epoch.append(lion_real)
+            lion_fake_per_epoch.append(lion_fake)
+
+        # Scheduler steps.
+        if epoch > (config.EPOCHS - config.SCHEDULER_STEPS):
+            sched_disc.step()
+            sched_gen.step()
+
+        # Record losses and scores
         losses_d.append(np.mean(loss_d_per_epoch))
         losses_g_p.append(np.mean(loss_g_p_per_epoch))
         losses_g_l.append(np.mean(loss_g_l_per_epoch))
+        cycle_p_losses.append(np.mean(cycle_p_loss_per_epoch))
+        cycle_l_losses.append(np.mean(cycle_l_loss_per_epoch))
+        identity_p_losses.append(np.mean(identity_p_loss_per_epoch))
+        identity_l_losses.append(np.mean(identity_l_loss_per_epoch))
         losses_full.append(np.mean(full_loss_per_epoch))
 
+        lion_real_scores.append(np.mean(lion_real_per_epoch))
+        lion_fake_scores.append(np.mean(lion_fake_per_epoch))
+
         # Log losses
-        print("Epoch [{}/{}], loss_d: {:.4f}, loss_g_p: {:.4f}, loss_g_l: {:.4f}, losses_full: {:.4f}".format(
-            epoch + 1,
-            eps,
-            losses_d[-1],
-            losses_g_p[-1],
-            losses_g_l[-1],
-            losses_full[-1])
+        print(
+            "Epoch [{}/{}],"
+            "loss_d: {:.4f},"
+            "nloss_g_p: {:.4f},"
+            "loss_g_l: {:.4f},"
+            "cycle_p_losses: {:.4f},"
+            "cycle_l_losses: {:.4f},"
+            "identity_p_losses: {:.4f},"
+            "identity_l_losses: {:.4f},"
+            "losses_full: {:.4f}".format(
+                epoch + 1,
+                eps,
+                losses_d[-1],
+                losses_g_p[-1],
+                losses_g_l[-1],
+                cycle_p_losses[-1],
+                cycle_l_losses[-1],
+                identity_p_losses[-1],
+                identity_l_losses[-1],
+                losses_full[-1])
         )
 
-    return losses_d, losses_g_p, losses_g_l, losses_full
+    return (
+        losses_d,
+        losses_g_p,
+        losses_g_l,
+        cycle_p_losses,
+        cycle_l_losses,
+        identity_p_losses,
+        identity_l_losses,
+        losses_full,
+        lion_real_scores,
+        lion_fake_scores
+    )
 
 
 def main():
@@ -148,15 +217,15 @@ def main():
         betas=(0.5, 0.999),
     )
 
-    sched_disc = optim.lr_scheduler.MultiStepLR(
+    sched_disc = optim.lr_scheduler.CosineAnnealingLR(
         opt_disc,
-        milestones=[x for x in range(int(config.EPOCHS/2), config.EPOCHS)],
-        gamma=0.98
+        T_max=config.SCHEDULER_STEPS,
+        eta_min=5e-7
     )
-    sched_gen = optim.lr_scheduler.MultiStepLR(
+    sched_gen = optim.lr_scheduler.CosineAnnealingLR(
         opt_gen,
-        milestones=[x for x in range(int(config.EPOCHS/2), config.EPOCHS)],
-        gamma=0.98
+        T_max=config.SCHEDULER_STEPS,
+        eta_min=5e-7
     )
 
     l1 = nn.L1Loss()
@@ -165,7 +234,18 @@ def main():
     g_scaler = torch.cuda.amp.GradScaler()
     d_scaler = torch.cuda.amp.GradScaler()
 
-    history = train(
+    (
+        losses_d,
+        losses_g_p,
+        losses_g_l,
+        cycle_p_losses,
+        cycle_l_losses,
+        identity_p_losses,
+        identity_l_losses,
+        losses_full,
+        lion_real_scores,
+        lion_fake_scores
+    ) = train(
         disc_p,
         disc_l,
         gen_p,
@@ -182,8 +262,18 @@ def main():
         config.EPOCHS
     )
 
-    losses_d, losses_g_p, losses_g_l, losses_full = history
-    return losses_d, losses_g_p, losses_g_l, losses_full
+    return (
+        losses_d,
+        losses_g_p,
+        losses_g_l,
+        cycle_p_losses,
+        cycle_l_losses,
+        identity_p_losses,
+        identity_l_losses,
+        losses_full,
+        lion_real_scores,
+        lion_fake_scores
+    )
 
 
 def get_generated_images_test(dl, gen_p, gen_l):

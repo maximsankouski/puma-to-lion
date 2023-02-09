@@ -22,4 +22,3 @@ if __name__ == "__main__":
     pumalion_train, pumalion_test = get_datasets(config.PUMA_ROOT, config.LION_ROOT)
     dataloader = DataLoader(pumalion_train, batch_size=config.BATCH_SIZE, shuffle=True)
     dataloader_test = DataLoader(pumalion_test, batch_size=config.BATCH_SIZE, shuffle=False)
-
