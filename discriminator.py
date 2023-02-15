@@ -28,12 +28,13 @@ class Discriminator(nn.Module):
                 layers.append(nn.LeakyReLU(0.2, inplace=True))
             in_channels = features[indx]
 
-        layers.append(nn.Sigmoid())
-
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
-        return self.model(x)
+        x = self.model(x)
+        x = nn.functional.avg_pool2d(x, x.size()[2:])
+        x = torch.flatten(x, 1)
+        return x
 
 
 def test():
@@ -41,6 +42,7 @@ def test():
     disc = Discriminator()
     print(disc(x).shape)
     print(disc)
+    print(disc(x))
 
 
 if __name__ == "__main__":
